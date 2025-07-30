@@ -1,0 +1,9 @@
+flask
+requests
+python-dotenv
+openai
+chromadb
+picamera2
+opencv-python
+celery
+autogen
