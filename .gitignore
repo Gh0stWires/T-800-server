@@ -6,6 +6,9 @@ venv/
 .DS_Store
 .cache/
 t800_memory/
+vosk_model/
+cl100k_base.tiktoken
+o200k_base.tiktoken
 cert.pem
 key.pem
 cert.crt

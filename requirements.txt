@@ -7,3 +7,4 @@ picamera2
 opencv-python
 celery
 autogen
+voxtral

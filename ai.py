@@ -1,15 +1,34 @@
 from openai import OpenAI
 import chromadb
 import os
-import datetime
+import json
+from ai_util import get_developer_message
+from ai_util import get_system_message
+from datetime import datetime
+
 from dotenv import load_dotenv
+from openai_harmony import (
+    load_harmony_encoding,
+    HarmonyEncodingName,
+    Conversation,
+    Message,
+    Role,
+    DeveloperContent,
+    Author,
+    StreamableParser
+)
 
 load_dotenv()
 
 # ------ CONFIG ------
+# last known working model qwen3-8b-64k-josiefied-uncensored-neo-max
 DEFAULT_AGENT_NAME = "Miss Minutes"
 MAX_RECENT_TURNS = 8          # How many turns to include after the summary
 SUMMARIZE_AFTER = 30          # How many messages before we summarize
+MODEL_ID = "openai/gpt-oss-20b"  # Model to use for chat completions
+
+
+#harmony_encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
 client = OpenAI(base_url=os.getenv("LLM_API_BASE"), api_key="lm-studio")
 
@@ -117,7 +136,7 @@ def summarize_chat_history(user_id, agent_name=DEFAULT_AGENT_NAME, num_to_summar
         summary_prompt += f"{role.title()}: {msg}\n"
 
     summary_response = client.chat.completions.create(
-        model="qwen3-8b-64k-josiefied-uncensored-neo-max",
+        model=MODEL_ID,
         messages=[
             {"role": "system", "content": summary_prompt}
         ],
@@ -136,24 +155,24 @@ def summarize_chat_history(user_id, agent_name=DEFAULT_AGENT_NAME, num_to_summar
 
 
 def ask_ai(user_id, question, agent_name=DEFAULT_AGENT_NAME, system_prompt_override=None):
-    store_message(user_id, "user", question) 
+    #store_message(user_id, "user", question) 
     total = count_user_messages(user_id)
     print(total)
-    if total >= SUMMARIZE_AFTER:
-        summarize_chat_history(user_id, agent_name)
+    """ if total >= SUMMARIZE_AFTER:
+        summarize_chat_history(user_id, agent_name) """
 
-    summary, conversation_history = retrieve_memory_with_summary(user_id)
+    #summary, conversation_history = retrieve_memory_with_summary(user_id)
     system_prompt = build_system_prompt(agent_name, user_id, system_prompt_override)
 
     messages = [{"role": "system", "content": system_prompt}]
-    if summary:
+    """ if summary:
         messages.append({"role": "system", "content": f"Summary of earlier conversation: {summary}"})
     for role, content in conversation_history:
-        messages.append({"role": role, "content": content})
+        messages.append({"role": role, "content": content}) """
     messages.append({"role": "user", "content": question})
 
     response_iter = client.chat.completions.create(
-        model="qwen3-8b-64k-josiefied-uncensored-neo-max",
+        model=MODEL_ID,
         messages=messages,
         temperature=0.7,
         max_tokens=2500,
@@ -179,7 +198,81 @@ def ask_ai(user_id, question, agent_name=DEFAULT_AGENT_NAME, system_prompt_overr
                 buffer = ""
             elif found_think:
                 yield {"type": "response", "content": delta.content}
-    store_message(user_id, "assistant", full_response.strip())
+    #store_message(user_id, "assistant", full_response.strip())
+
+
+
+def ask_open_gpt(user_id, question, agent_name=DEFAULT_AGENT_NAME, system_prompt_override=None, fromVoice=False):
+    system_instruction = system_prompt_override or (
+        "You are a helpful assistant. Respond with concise and polite answers."
+    )
+
+    voice_response_schema = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "voice_response",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "voice_output": {
+                        "type": "string",
+                        "description": "A short and concise sentence suitable for speaking to the user."
+                    }
+                },
+                "required": ["voice_output"]
+            }
+        }
+    }
+
+    params = {
+    "model": MODEL_ID,
+    "messages": build_open_gpt_messages(
+        question,
+        system_identity=system_instruction,
+        user_id=user_id,
+        agent_name=agent_name,
+        fromVoice=fromVoice
+    ),
+    "stream": True,
+    "temperature": 0.9,
+    "max_tokens": 2500,
+    "stream_options": {"include_usage": True}
+    }
+
+
+    
+    # Send tokens directly using OpenAI-compatible `messages` API
+    response = client.chat.completions.create(**params)
+
+    
+    
+    for chunk in response:
+        if not getattr(chunk, "choices", None):
+            continue
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if getattr(delta, "reasoning", None):
+            yield {"type": "thinking", "content": delta.reasoning}
+        if getattr(delta, "content", None):
+            yield {"type": "response", "content": delta.content}
+
+
+def build_open_gpt_messages(user_message, system_identity=None, user_id=None, agent_name=DEFAULT_AGENT_NAME, date=None, fromVoice=False):
+    """
+    Build a list of messages for OpenGPT with system and user, reasoning set to HIGH.
+    Returns a list of dicts suitable for OpenAI/chat API.
+    """
+    if not system_identity:
+        system_identity = "You are ChatGPT, a large language model trained by OpenAI."
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+    system_msg = get_system_message(system_identity, date, user_id=user_id, agent_name=agent_name, fromVoice=fromVoice)
+    messages = [
+        {"role": "system", "content": str(system_msg)},
+        {"role": "user", "content": user_message}
+    ]
+    return messages
 
 # Example usage for CLI/debug
 if __name__ == "__main__":
